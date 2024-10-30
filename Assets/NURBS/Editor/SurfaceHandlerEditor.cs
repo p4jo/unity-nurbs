@@ -1,8 +1,10 @@
-﻿using System.Linq;
+﻿using System;
+using System.Linq;
 using UnityEngine;
 using UnityEditor;
 using UnityEngine.Rendering;
 using System.Collections.Generic;
+using Object = UnityEngine.Object;
 
 namespace kmty.NURBS {
     [CustomEditor(typeof(SurfaceHandler))]
@@ -11,7 +13,11 @@ namespace kmty.NURBS {
         protected bool xloop;
         protected bool yloop;
         protected List<int> idcs = new List<int>();
-
+        private bool showWireframe => _activeInstances.ContainsKey(target.GetInstanceID());
+        private static Dictionary<int, SurfaceHandlerEditor> _activeInstances = new();
+        private SurfaceHandlerEditor theActiveInstance;
+        private bool deactivateOnDisable = true;
+        
         public override void OnInspectorGUI() {
             base.OnInspectorGUI();
             EditorGUILayout.Space(1);
@@ -20,9 +26,66 @@ namespace kmty.NURBS {
                 var path = $"{h.BakePath}/{h.BakeName}.asset";
                 CreateOrUpdate(Weld(h.mesh), path);
             }
+
+            if (theActiveInstance == this)
+                // this is enabled
+            {
+                if (deactivateOnDisable)
+                {
+                    if (GUILayout.Button("Keep Wireframe in Editor"))
+                        deactivateOnDisable = false;
+                }
+                else
+                {
+                    if (GUILayout.Button("Hide Wireframe"))
+                        deactivateOnDisable = true;
+                }
+            }
+            else
+            {
+                // another instance is enabled, this is disabled
+                if (GUILayout.Button("Hide Wireframe"))
+                {
+                    theActiveInstance.Disable(); // this is still active: deactivateOnDisable = false
+                    this.Enable();
+                }
+            }
         }
 
-        void OnSceneGUI() {
+        // When the object is selected, a new instance of this class is created and OnEnable is called.
+        void OnEnable()
+        {
+            if (_activeInstances.TryGetValue(target.GetInstanceID(), out var editor))
+                theActiveInstance = editor;
+            else
+                Enable();
+        }
+
+        private void Enable()
+        {
+            theActiveInstance = this;
+            _activeInstances.Add(target.GetInstanceID(), this);
+            SceneView.duringSceneGui += OnSceneGUI;
+        }
+
+        // When the object is deselected, this is called.
+        private void OnDisable()
+        {
+            if (deactivateOnDisable && theActiveInstance == this /* this is enabled */)
+                Disable();
+        }
+
+        void Disable()
+        {
+            _activeInstances.Remove(target.GetInstanceID());
+            theActiveInstance = null;
+            SceneView.duringSceneGui -= OnSceneGUI;
+        }
+
+        void OnSceneGUI(SceneView sceneView)
+        {
+            if (theActiveInstance != this) return;
+            if (target == null) return;
             var cache = Handles.zTest;
 
             var h = (SurfaceHandler)target;
@@ -30,6 +93,7 @@ namespace kmty.NURBS {
             var q = Quaternion.identity;
             var selected = false;
             var data = h.Data;
+            if (data == null) return;   
             var cps  = data.cps;
             if (h.segments.Count == 0) h.UpdateSegments(data, h.transform.position);
 
@@ -91,6 +155,7 @@ namespace kmty.NURBS {
             h.UpdateSegments(data, h.transform.position);
             Handles.zTest = cache;
         }
+        // void OnSceneGUI() => OnSceneGUI(null);
 
         void CreateOrUpdate(Object altAsset, string assetPath) {
             var oldAsset = AssetDatabase.LoadAssetAtPath<Mesh>(assetPath);
